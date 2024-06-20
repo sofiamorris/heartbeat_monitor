@@ -5,64 +5,113 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use threadpool::ThreadPool;
+use std::collections::VecDeque;
 use std::env;
+
+#[derive(Clone)]
+pub struct Client{
+    pub conn: Arc<Mutex<TcpStream>>,
+    pub fail_count: i32
+}
 
 fn listener(host: &str) -> std::io::Result<()>{
 
     let listener = TcpListener::bind(host).unwrap();
     println!("Bind successful");
     
-    let pool = ThreadPool::new(2); //change to any thread limit
+    let pool = ThreadPool::new(10); //change to any thread limit
+    let deque = Arc::new(Mutex::new(VecDeque::new()));
+    let deque_clone = Arc::clone(& deque);
+    
+    let _ = thread::spawn(move|| {
 
-    for stream in listener.incoming() {
-        println!("Request received on {:?}, processing...", stream);
-        match stream {
-            Ok(stream) => {
-                let shared_stream = Arc::new(Mutex::new(stream));
-                let _ = pool.execute(move || {
-                    println!("Passing TCP connection to handler...");
-                    let _ = handle_connection(& shared_stream);
-                    println!("Connection handled");
-                });
+        println!("Deque thread entered");
+
+        for stream in listener.incoming() {
+
+            println!("Request received on {:?}, processing...", stream);
+            match stream {
+                Ok(stream) => {
+
+                    let shared_stream = Arc::new(Mutex::new(stream));
+                    let client = Client {
+                        conn: shared_stream,
+                        fail_count: 0
+                    };
+
+                    {
+                        let mut loc_deque = deque_clone.lock().unwrap();
+                        let _ = loc_deque.push_back(client);
+                    }
+
+                }
+                Err(e) => {
+                    eprintln!("Connection failed: {}", e);
+                }
             }
-            Err(e) => {
-                eprintln!("Connection failed: {}", e);
-            }
+            println!("moving to next incoming stream");
         }
-        println!("moving to next incoming stream");
+    });
+    
+    let deque_clone = Arc::clone(& deque);
+
+    loop {
+
+        let popped_client = {
+            let mut loc_deque = deque_clone.lock().unwrap();
+            loc_deque.pop_front()
+        };
+
+        let popped_client = match popped_client {
+            Some(client) => client,
+            None => continue
+        };
+
+        let deque_clone2 = Arc::clone(& deque_clone);
+
+        pool.execute(move || {
+
+            println!("Passing TCP connection to handler...");
+            let _ = handle_connection(popped_client.clone()).unwrap();
+            println!("Connection handled");
+
+            if popped_client.fail_count < 10 {
+                let deque_clone3 = Arc::clone(& deque_clone2);
+
+                {
+                    let mut loc_deque = deque_clone3.lock().unwrap();
+                    let _ = loc_deque.push_back(popped_client.clone());
+                }
+            }
+
+        });
     }
 
     Ok(())
 }
 
-fn handle_connection(stream: & Arc<Mutex<TcpStream>>) -> std::io::Result<()>{
+fn handle_connection(mut cli: Client) -> std::io::Result<()>{
     println!("Starting heartbeat handler");
 
-    let mut timer = Instant::now();
     let failure_duration = Duration::from_secs(10); //change to any failure limit
 
-    loop{
+    let loc_stream: &mut TcpStream = &mut *cli.conn.lock().unwrap();
+    loc_stream.set_read_timeout(Some(failure_duration))?;
 
-        if timer.elapsed() > failure_duration{
-            println!("Connection has died");
-            return Ok(());
-        }
+    let received = match stream_read(loc_stream) {
+        Ok(message) => message,
+        Err(err) => {return Err(err);}
+    };
 
-        let loc_stream: &mut TcpStream = &mut *stream.lock().unwrap();
-        loc_stream.set_read_timeout(Some(failure_duration))?;
-
-        let received = match stream_read(loc_stream) {
-            Ok(message) => message,
-            Err(err) => {return Err(err);}
-        };
-
-        timer = Instant::now();
-
+    if received == "" {
+        cli.fail_count += 1;
+    }
+    else {    
         let ack = "Received message";
+        cli.fail_count = 0;
         let _ = loc_stream.write(ack.as_bytes());
-
         println!("{}", received);
     }
 
