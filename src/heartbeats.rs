@@ -1,5 +1,5 @@
-mod connection;
-use connection::stream_read;
+mod hb_connection;
+use hb_connection::stream_read;
 
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -30,7 +30,7 @@ fn heartbeats(host: &str, msg: &str) -> std::io::Result<()> {
         };
         println!("{}", received);
 
-        thread::sleep(time::Duration::from_secs(3)); //change to any rate
+        thread::sleep(time::Duration::from_secs(5)); //change to any rate
 
     }
     Ok(())

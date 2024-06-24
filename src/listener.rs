@@ -1,5 +1,5 @@
-mod connection;
-use connection::stream_read;
+mod hb_connection;
+use hb_connection::stream_read;
 
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -40,7 +40,7 @@ fn listener(host: &str) -> std::io::Result<()>{
                         conn: shared_stream,
                         fail_count: 0
                     };
-
+                    println!("Adding new connection to queue");
                     {
                         let mut loc_deque = deque_clone.lock().unwrap();
                         let _ = loc_deque.push_back(client);
@@ -51,7 +51,7 @@ fn listener(host: &str) -> std::io::Result<()>{
                     eprintln!("Connection failed: {}", e);
                 }
             }
-            println!("moving to next incoming stream");
+            println!("Moving to next incoming stream");
         }
     });
     
@@ -59,12 +59,13 @@ fn listener(host: &str) -> std::io::Result<()>{
 
     loop {
 
+        //println!("Popping client from VecDeque");
         let popped_client = {
             let mut loc_deque = deque_clone.lock().unwrap();
             loc_deque.pop_front()
         };
 
-        let popped_client = match popped_client {
+        let mut popped_client = match popped_client {
             Some(client) => client,
             None => continue
         };
@@ -74,14 +75,13 @@ fn listener(host: &str) -> std::io::Result<()>{
         pool.execute(move || {
 
             println!("Passing TCP connection to handler...");
-            let _ = handle_connection(popped_client.clone()).unwrap();
+            let _ = handle_connection(&mut(popped_client)).unwrap();
             println!("Connection handled");
 
             if popped_client.fail_count < 10 {
-                let deque_clone3 = Arc::clone(& deque_clone2);
-
+                println!("Adding client back to VecDeque");
                 {
-                    let mut loc_deque = deque_clone3.lock().unwrap();
+                    let mut loc_deque = deque_clone2.lock().unwrap();
                     let _ = loc_deque.push_back(popped_client.clone());
                 }
             }
@@ -92,7 +92,7 @@ fn listener(host: &str) -> std::io::Result<()>{
     Ok(())
 }
 
-fn handle_connection(mut cli: Client) -> std::io::Result<()>{
+fn handle_connection(cli: &mut Client) -> std::io::Result<()>{
     println!("Starting heartbeat handler");
 
     let failure_duration = Duration::from_secs(10); //change to any failure limit
@@ -102,11 +102,12 @@ fn handle_connection(mut cli: Client) -> std::io::Result<()>{
 
     let received = match stream_read(loc_stream) {
         Ok(message) => message,
-        Err(err) => {return Err(err);}
+        Err(err) => {return Err(err);} //print connection is no longer valid
     };
 
     if received == "" {
         cli.fail_count += 1;
+        println!("Fail count incremented : {}", cli.fail_count);
     }
     else {    
         let ack = "Received message";
