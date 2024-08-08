@@ -40,7 +40,7 @@ fn listener(host: &str) -> std::io::Result<()>{
                         conn: shared_stream,
                         fail_count: 0
                     };
-                    println!("Adding new connection to queue");
+                    //println!("Adding new connection to queue");
                     {
                         let mut loc_deque = deque_clone.lock().unwrap();
                         let _ = loc_deque.push_back(client);
@@ -51,7 +51,7 @@ fn listener(host: &str) -> std::io::Result<()>{
                     eprintln!("Connection failed: {}", e);
                 }
             }
-            println!("Moving to next incoming stream");
+            //println!("Moving to next incoming stream");
         }
     });
     
@@ -74,12 +74,12 @@ fn listener(host: &str) -> std::io::Result<()>{
 
         pool.execute(move || {
 
-            println!("Passing TCP connection to handler...");
+            //println!("Passing TCP connection to handler...");
             let _ = handle_connection(&mut(popped_client)).unwrap();
-            println!("Connection handled");
+            //println!("Connection handled");
 
             if popped_client.fail_count < 10 {
-                println!("Adding client back to VecDeque");
+                //println!("Adding client back to VecDeque");
                 {
                     let mut loc_deque = deque_clone2.lock().unwrap();
                     let _ = loc_deque.push_back(popped_client.clone());
@@ -93,7 +93,7 @@ fn listener(host: &str) -> std::io::Result<()>{
 }
 
 fn handle_connection(cli: &mut Client) -> std::io::Result<()>{
-    println!("Starting heartbeat handler");
+    //println!("Starting heartbeat handler");
 
     let failure_duration = Duration::from_secs(10); //change to any failure limit
 
